@@ -368,7 +368,6 @@ class Converter :
 
             # If we have a pure rotation about Z ...
             if np.equal( np.round(Rz, roundDigits), Z).all() :
-
                 # Special case angle=PI, for which the formulas below do not work
                 if round(R[0,0],roundDigits) == -1 and round(R[1,1],roundDigits) == -1 :
                     rz = math.pi
@@ -376,12 +375,21 @@ class Converter :
                     diffaxis = np.array( [ R[2,1] - R[1,2],  R[0,2] - R[2,0], R[1,0] - R[0,1] ] )
                     norm     = np.linalg.norm( diffaxis )
                     if norm > 1e-5 :
+                        rz = math.atan2( norm, R.trace()-1 )
+
                         axisnorm = np.round( diffaxis/norm, 5 ) # normalized axis, rounded
+                        # Check the inversion of the axis due to negative rotation angles
+                        # Our axis must be Z, not -Z
+                        if axisnorm[2] < 0 :
+                            axisnorm[2] = -axisnorm[2]
+                            rz = -rz
+
                         if not np.equal( axisnorm, Z).all() :
                             # We checked above it's a pure rotation about Z, so that
                             # should be confirmed here too...
-                            logging.warning("possible inconsistency in the joint frame rotation")
-                        rz = math.atan2( norm, R.trace()-1 )
+                            msg = "Possible inconsistency in the " \
+                                + joint.name + " joint frame rotation"
+                            logging.warning(msg)
 
                 # Now that we have possibly changed rz, recompute the joint transform
                 # and the rotation difference with the URDF transform

@@ -459,8 +459,8 @@ class Serializer :
         print(self.__ind*' ', text, sep='', file=self.file)
 
     def _printFrame(self, tr, rot) :
-        self.myprint( self.vec3Str('translation= ', tr ) )
-        self.myprint( self.vec3Str('rotation   = ', rot, angles=True) )
+        self.myprint( self.vec3Str('translation = ', tr ) )
+        self.myprint( self.vec3Str('rotation    = ', rot, angles=True) )
 
     def _blockStart(self, name):
         self.myprint(name + ' {')

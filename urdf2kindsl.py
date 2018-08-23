@@ -504,7 +504,7 @@ class Serializer :
             self.printChildren(link)
 
             rots = getIntrinsicXYZFromR(link.rcg_R_urdf)
-            if math.fsum( [math.fabs(x) for x in rots] ) > 0 :
+            if  any( [math.fabs(x)>1e-5 for x in rots] ) :
                 self._blockStart('frames')
                 self._blockStart('urdf_' + link.name)
                 self._printFrame( (0.0,0.0,0.0), rots )

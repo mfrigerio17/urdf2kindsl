@@ -535,6 +535,21 @@ class Serializer :
         self.myprint('}\n')
 
 
+def urdfdbg_linkOrigin(urdf, eelinkname):
+    logging.debug("Entering urdfdbg_linkOrigin() function ...")
+    H = np.identity(4)
+
+    currentLink  = urdf.links[eelinkname]
+    while currentLink is not None :
+        currentJoint = currentLink.supportingJoint
+        logging.debug("Link : " + currentLink.name)
+        if currentJoint is not None :
+            logging.debug("Joint: " + currentJoint.name)
+            H = np.matmul( currentJoint.predec_H_joint , H )
+        currentLink  = currentLink.parent
+
+    print( np.round(H[:3,3], 5) )
+
 
 if __name__ == "__main__" :
     argparser = argparse.ArgumentParser(
@@ -552,7 +567,11 @@ if __name__ == "__main__" :
             type=int,
             help='number of digits of the fractional part of an angle used to determine if it is equal to PI (default 5)',
             default=5)
-
+    group = argparser.add_argument_group('URDF inspection', 'Misc information about the given URDF (no conversion performed)')
+    group.add_argument('--link-origin', metavar="LINK",
+            type=str,
+            help='print the origin of the frame of LINK in base coordinates, for the zero configuration'
+            )
     args = argparser.parse_args()
 
     file = sys.stdout
@@ -560,24 +579,12 @@ if __name__ == "__main__" :
         file = open(args.output, 'w')
 
     urdf = URDFWrapper( args.urdf )
-    conv = Converter( urdf )
-    form = NumFormatter( round_digits=args.digits, pi_round_digits=args.pi_digits)
-    ser = Serializer(file, numFormatter=form)
-    ser.writeModel(conv)
+    if args.link_origin is not None :
+        urdfdbg_linkOrigin(urdf, args.link_origin)
+    else :
+        conv = Converter( urdf )
+        form = NumFormatter( round_digits=args.digits, pi_round_digits=args.pi_digits)
+        ser = Serializer(file, numFormatter=form)
+        ser.writeModel(conv)
 
-
-def debug(urdf, eelinkname):
-    logging.debug("Entering urdf2kindsl debug function ...")
-    H = np.identity(4)
-
-    currentLink  = urdf.links[eelinkname]
-    while currentLink is not None :
-        currentJoint = currentLink.supportingJoint
-        logging.debug("Link : " + currentLink.name)
-        if currentJoint is not None :
-            logging.debug("Joint: " + currentJoint.name)
-            H = np.matmul( currentJoint.predec_H_joint , H )
-        currentLink  = currentLink.parent
-
-    print( np.round(H, 5) )
 

@@ -188,11 +188,20 @@ class URDFWrapper :
 
 
     def readJointFrameData(self, jointNode):
-        frameNode = jointNode.find('origin')
-
         params = dict()
-        params['xyz'] = tuple([float(x) for x in frameNode.get('xyz').split()])
-        params['rpy'] = tuple([float(x) for x in frameNode.get('rpy').split()])
+
+        # URDF defaults:
+        params['xyz'] = (0,0,0)
+        params['rpy'] = (0,0,0)
+
+        frameNode = jointNode.find('origin')
+        if frameNode != None :
+            xyz_node = frameNode.get('xyz')
+            if xyz_node != None :
+                params['xyz'] = tuple([float(x) for x in xyz_node.split()])
+            rpy_node = frameNode.get('rpy')
+            if rpy_node != None :
+                params['rpy'] = tuple([float(x) for x in rpy_node.split()])
 
         axis_node = jointNode.find('axis')
         if axis_node != None :

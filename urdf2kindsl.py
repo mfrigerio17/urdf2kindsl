@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 '''
 Created on August 2018
 
@@ -10,6 +10,19 @@ import xml.etree.ElementTree as ET
 from collections import OrderedDict as ODict
 import numpy as np
 
+
+logger = None
+
+
+'''
+Extrinsic rotations are about the axes of the original coordinate system, which
+is assumed to remain motionless. This is the convention of the 'rpy' attribute
+of the URDF format.
+Intrinsic rotations are about the axes of a rotating coordinate system, attached
+to the moving body, which changes its orientation after each individual
+rotation. This is the convention of that 'rotation' attribute of the RobCoGen
+format.
+'''
 
 
 def getR_intrinsicXYZ(rx, ry, rz):
@@ -92,6 +105,45 @@ def _intrinsic2extrinsic_XYZ(irx, iry, irz):
 
     return (erx, ery, erz)
 
+def __cross_mx(r) :
+    return np.array(
+        [[ 0   , -r[2],  r[1] ],
+         [ r[2],   0  , -r[0] ],
+         [-r[1],  r[0],    0  ]] )
+
+def rotoTranslateInertia(inertia, tr, R) :
+    mass = inertia['mass']
+    com  = inertia['com']
+    vec  = com - tr
+
+    com_x = __cross_mx(com)
+    vec_x = __cross_mx(vec)
+
+    ixx = inertia['Ix']
+    iyy = inertia['Iy']
+    izz = inertia['Iz']
+    ixy = inertia['Ixy']
+    ixz = inertia['Ixz']
+    iyz = inertia['Iyz']
+    tensor = np.array( [[ ixx, -ixy, -ixz],
+                        [-ixy,  iyy, -iyz],
+                        [-ixy, -iyz,  izz] ])
+    tensor = tensor - mass * (com_x @ com_x.T - vec_x @ vec_x.T)
+
+    tensor2 = R @ tensor @ R.T
+    com2 = R @ vec
+    ret = {}
+    ret['mass'] = mass
+    ret['com'] = com2
+    ret['Ix']  =  tensor2[0,0]
+    ret['Iy']  =  tensor2[1,1]
+    ret['Iz']  =  tensor2[2,2]
+    ret['Ixy'] = -tensor2[0,1]
+    ret['Ixz'] = -tensor2[0,2]
+    ret['Iyz'] = -tensor2[1,2]
+    return ret
+
+
 '''
 Simply reads the XML file and stores the links/joints data, no conversions
 '''
@@ -122,6 +174,7 @@ class URDFWrapper :
 
         self.links  = ODict()
         self.joints = ODict()
+        self.frames = ODict()
 
         for nodelink in linkNodes:
             name = nodelink.get('name')
@@ -213,16 +266,23 @@ class URDFWrapper :
 
 
 
-'''
-Reads the model from a URDFWrapper instance, and applies the necessary conversions
-'''
 class Converter :
+    '''Reads the model from a URDFWrapper instance, and applies the necessary conversions
+    '''
+    class Frame :
+        def __init__(self):
+            self.H   = np.identity(4)    # Homogeneous coordinate transform, from this-instance-coordinates to some link coordinates
+            self.rot = (0.0, 0.0, 0.0)   # Intrinsic rx, ry, rz angles
+            self.tr  = self.H[0:3,3]     # View of the translation vector
+
     class Link :
         def __init__(self, namestr):
             self.name    = namestr
             self.parent  = None
+            self.parentJ = None
             self.children= list()
             self.inertia = dict()
+            self.frames  = dict()
             self.rcg_R_urdf = np.identity(3)
 
     class Joint :
@@ -231,16 +291,18 @@ class Converter :
             self.type = 'revolute'
             self.predecessor = None
             self.successor  = None
-            self.frame = dict()
+            self.frame = Converter.Frame()
+
 
     @staticmethod
     def toValidID( name ) :
         return name.replace('-', '__')
 
-    def __init__(self, urdf) :
+    def __init__(self, urdf, options) :
         self.robotName = urdf.robotName
         self.links  = ODict()
         self.joints = ODict()
+        self.frames = ODict()
 
         for urdfname in urdf.links.keys() :
             name = self.toValidID( urdfname )
@@ -258,8 +320,23 @@ class Converter :
             self.convertJointFrame(joint, urdfjoint)
 
             joint.successor.parent = joint.predecessor
+            joint.successor.parentJ= joint
             joint.predecessor.children.append( (joint.successor, joint) )
             self.joints[name] = joint
+
+        orphans = [l for l in self.links.values() if l.parent==None]
+        if len(orphans)==0 :
+            logger.fatal("Could not find any root link (i.e. a link without parent).")
+            logger.fatal("Check for kinematic loops.")
+            print("Error, no root link found. Aborting", file=sys.stderr)
+            sys.exit(-1)
+        if len(orphans) > 1 :
+            logger.warning("Found {0} links without parent, only one expected".format(len(orphans)))
+            logger.warning("Any robot model must have exactly one root element.")
+            logger.warning("This might lead to unexpected results.")
+        self.root = orphans[0]
+
+        self.leafs = [l for l in self.links.values() if len(l.children)==0]
 
         # Conversion of the inertia must happen after the joint frame conversion,
         # which determines the required coordinate transforms
@@ -267,74 +344,152 @@ class Converter :
             name = self.toValidID( urdfname )
             self.convertInertialData(self.links[name], urdf.links[urdfname].inertia)
 
+        if options.prunefixed :
+            # Let's first explicitly check for the nasty case where the root is
+            # a dummy link, connected via a fixed joint to the first link
+            self._collapseDummyRoots()
+
+            self._pruneDummies(options)
+
+    def _collapseDummyRoots(self):
+        root = self.root
+        keepGoing = True
+        while self.isDummyLink(root) and keepGoing :
+            if len(root.children) > 1 :
+                logger.warning("Detected dummy root link ({0}) with multiple children; cannot collapse".format(root.name))
+                keepGoing = False
+                for childPair in root.children :
+                    childPair[1].__preserve = True
+            else :
+                childSpec = root.children[0]
+                joint = childSpec[1]
+                child = childSpec[0]
+                if joint.type != 'fixed' :
+                    logger.warning("Detected dummy root link ({0}) supporting a non-fixed joint ({1})".format(root.name, joint.name))
+                    keepGoing = False
+                    joint.__preserve = True
+                else :
+                    # We have a dummy root link, with only one child connected via fixed joint.
+                    # Let's delete it and replace the root
+                    logger.info("Deleting dummy pair '{0}'-'{1}', root replaced with '{2}'".format(
+                        root.name, joint.name, child.name))
+                    root = child
+                    del self.links[root.name]
+                    del self.joints[joint.name]
+
+        self.root = root
+
+    def _pruneDummies(self, options):
+        for leaf in self.leafs :
+            link = leaf
+
+            while True :
+                joint  = link.parentJ
+                parent = link.parent
+
+                if joint is None or parent is None:
+                    break
+                if joint.type != 'fixed' :
+                    break
+
+                logger.debug("Trying to collapse link '{0}', connected by joint '{1}'".format(link.name, joint.name))
+                if options.toframes :
+                    # We need to "move" the frames associated with 'link' into
+                    # the parent frames. First of all, the implicit link frame,
+                    # which is the same as the supporting-joint frame:
+                    parent.frames[link.name] = joint.frame
+
+                    # Then the additional custom frames on the link; for these
+                    # ones we must perform a coordinate transform
+                    for ufr in link.frames.keys() :
+                        original = link.frames[ufr]
+                        shiftedup= Converter.Frame()
+                        # We need the [:,:] to assign values to the same memory
+                        # location, because the translation attribute is a view
+                        # of H. If we change H, the view will be inconsistent
+                        shiftedup.H[:,:] = np.matmul( joint.frame.H, original.H )
+                        shiftedup.rot = getIntrinsicXYZFromR( shiftedup.H[0:3,0:3] )
+                        parent.frames[ufr] = shiftedup
+
+                if options.lumpinertia :
+                    # Keep in mind that at this point all the inertia properties
+                    # are in robcogen format, that is, in link coordinates. And
+                    # the link frame is the same as the supporting-joint frame
+                    if link.inertia['mass'] != 0 :
+                        loadMe = parent.inertia
+                        parent_R_link = getR_intrinsicXYZ( *joint.frame.rot )
+
+                        # The translation we need is the position of the parent
+                        # link frame relative to the joint frame, in joint frame
+                        # coordinates
+                        tr = - parent_R_link.T @ joint.frame.tr
+                        # Transform the inertia of the link in the coordinate
+                        # system of the parent link
+                        addMe = rotoTranslateInertia(link.inertia, tr, parent_R_link)
+                        m1 = loadMe['mass']
+                        m2 = addMe['mass']
+
+                        loadMe['mass'] = m1 + m2
+                        loadMe['Ix']  = loadMe['Ix']  + addMe['Ix']
+                        loadMe['Iy']  = loadMe['Iy']  + addMe['Iy']
+                        loadMe['Iz']  = loadMe['Iz']  + addMe['Iz']
+                        loadMe['Ixy'] = loadMe['Ixy'] + addMe['Ixy']
+                        loadMe['Ixz'] = loadMe['Ixz'] + addMe['Ixz']
+                        loadMe['Iyz'] = loadMe['Iyz'] + addMe['Iyz']
+                        loadMe['com'] = (loadMe['com']*m1 + addMe['com']*m2)/(m1+m2)
+
+                # The actual clean up of the traces of 'link'
+                del self.links[link.name]
+                del self.joints[joint.name]
+                parent.children.remove( (link, joint) )
+                link = parent # recursively keep going up
+
+        # Reconstruct the leafs array, after the pruning
+        self.leafs = [l for l in self.links.values() if len(l.children)==0]
+
+
+    def isDummyLink(self, link):
+        immaterial = link.inertia['mass'] == 0.0
+        fixedj = False
+        if link.parentJ is not None :
+            fixedj = (link.parentJ.type == 'fixed')
+
+        return (immaterial and fixedj)
 
     def convertInertialData(self, link, urdfParams):
-        com = urdfParams['xyz']
-        mass= urdfParams['mass']
+        iin = {}
+        iin['mass'] = urdfParams['mass']
+        iin['com']  = np.zeros(3)
+        iin['Ix']   =  urdfParams['ixx']
+        iin['Iy']   =  urdfParams['iyy']
+        iin['Iz']   =  urdfParams['izz']
+        iin['Ixy']  = -urdfParams['ixy']
+        iin['Ixz']  = -urdfParams['ixz']
+        iin['Iyz']  = -urdfParams['iyz']
 
-        # Parallel axis theorem: transforms the inertia moments expressed in the
-        # COM frame into the link frame. Note the sign swap for the centrifugal
-        # moments, as the URDF stores the element of the tensor, not the moment
-        # itself.
-        comx = com[0]
-        comy = com[1]
-        comz = com[2]
-        ixx =  urdfParams['ixx'] + mass * (comy*comy + comz*comz)
-        iyy =  urdfParams['iyy'] + mass * (comx*comx + comz*comz)
-        izz =  urdfParams['izz'] + mass * (comx*comx + comy*comy)
-        ixy = -urdfParams['ixy'] + mass * comx * comy
-        ixz = -urdfParams['ixz'] + mass * comx * comz
-        iyz = -urdfParams['iyz'] + mass * comy * comz
-
-        tensor = np.array( [[ ixx, -ixy, -ixz],
-                            [-ixy,  iyy, -iyz],
-                            [-ixy, -iyz,  izz] ])
-        tensor_rcg = np.matmul( link.rcg_R_urdf, np.matmul( tensor, link.rcg_R_urdf.transpose()) )
-
-        link.inertia['Ix']  =  tensor_rcg[0,0]
-        link.inertia['Iy']  =  tensor_rcg[1,1]
-        link.inertia['Iz']  =  tensor_rcg[2,2]
-        link.inertia['Ixy'] = -tensor_rcg[0,1]
-        link.inertia['Ixz'] = -tensor_rcg[0,2]
-        link.inertia['Iyz'] = -tensor_rcg[1,2]
-
-        link.inertia['mass']= mass
-        link.inertia['com'] = np.matmul(link.rcg_R_urdf, com)
-
+        tr = -np.array(urdfParams['xyz'])
+        iout = rotoTranslateInertia(iin, tr, link.rcg_R_urdf)
+        link.inertia = iout
 
     def convertJointFrame(self, joint, urdfjoint):
         rpy = urdfjoint.frame['rpy']
-        sx = math.sin(rpy[0])
-        cx = math.cos(rpy[0])
-        sy = math.sin(rpy[1])
-        cy = math.cos(rpy[1])
-        sz = math.sin(rpy[2])
-        cz = math.cos(rpy[2])
-        '''
-        This is the rotation matrix base_R_rotated, where 'rotated' is obtained from
-        'base' with the **extrinsic** rotations rx, ry, and rz
 
-        cos(ry) cos(rz)    sin(rx) sin(ry) cos(rz) - cos(rx) sin(rz)    sin(rx) sin(rz) + cos(rx) sin(ry) cos(rz)
-        cos(ry) sin(rz)    sin(rx) sin(ry) sin(rz) + cos(rx) cos(rz)    cos(rx) sin(ry) sin(rz) - sin(rx) cos(rz)
-           - sin(ry)                    sin(rx) cos(ry)                              cos(rx) cos(ry)
-        '''
-        urdflink_X_urdfjoint = np.array(
-            [[cy*cz,  cz*sx*sy - cx*sz,  sx*sz + cx*cz*sy],
-             [cy*sz,  sx*sy*sz + cx*cz,  cx*sy*sz - cz*sx],
-             [ - sy,        cy*sx     ,        cx*cy      ]] )
+        # Rotation matrix from URDF joint frame to URDF link frame
+        urdflink_X_urdfjoint = getR_extrinsicXYZ(* rpy )
 
+        # Rotation matrix from URDF joint frame to RobCoGen link frame
         rcglink_X_urdfjoint = np.matmul(joint.predecessor.rcg_R_urdf, urdflink_X_urdfjoint)
 
         '''
-        If the URDF joint is fixed, there is no axis. In that case we just
-        convert the extrinsic rotation parameters (URDF) to intrinsic rotations
-        (robcogen), to have the same frame.
+        If the URDF joint is fixed, there is no axis. In that case we only need
+        to get the intrinsic rotation parameters (robcogen), from the complete
+        rotation matrix we already computed above.
         Otherwise, we need to get the coordinates of the joint axis and make
         sure to rotate the robcogen frame so as to align its Z axis with the
         joint axis.
         '''
         if urdfjoint.type == "fixed" :
-            (rx, ry, rz) = _intrinsic2extrinsic_XYZ( * rpy )
+            (rx, ry, rz) = getIntrinsicXYZFromR( rcglink_X_urdfjoint )
         else :
             axis = np.array( urdfjoint.frame['axis'] )
 
@@ -361,15 +516,21 @@ class Converter :
                 rx = 0.0
             rz = 0.0;
             if round(math.cos(rx)*math.cos(ry),5) != round(axis_linkframe[2],5) :
-                logging.warning("possible inconsistency in the joint frame rotation")
+                logger.warning("possible inconsistency in the joint frame rotation")
 
+        # Rotation matrix from RobCoGen joint frame to link frame
         rcglink_X_rcgjoint = getR_intrinsicXYZ(rx, ry, rz)
+
+        # Rotation matrix from URDF joint frame to RobCoGen joint frame.
+        # We can interpret this one as the rotation difference between the joint
+        #  frames in the two models.
         R = np.matmul(rcglink_X_rcgjoint.transpose() , rcglink_X_urdfjoint)
 
         # The best we can do, at this point, is to check whether the difference
-        # between the two frames is simply a rotation about z, because (for a revolute
-        # joint), we can always add a rotation about z without changing the rest
-        # (the zero configuration gets affected)
+        # between the two frames is simply a rotation about z (for a revolute
+        # joint), and, if so, add it to the parameters (affecting the zero
+        # configuration only). We do this to "minimize" the variation with
+        # respect to the URDF joint frame.
         if joint.type == 'revolute' :
             roundDigits = 5
             Z = np.array([0,0,1])
@@ -398,15 +559,19 @@ class Converter :
                             # should be confirmed here too...
                             msg = "Possible inconsistency in the " \
                                 + joint.name + " joint frame rotation"
-                            logging.warning(msg)
+                            logger.warning(msg)
 
                 # Now that we have possibly changed rz, recompute the joint transform
                 # and the rotation difference with the URDF transform
                 rcglink_X_rcgjoint = getR_intrinsicXYZ(rx, ry, rz)
                 R = np.matmul(rcglink_X_rcgjoint.transpose(), rcglink_X_urdfjoint)
 
-        joint.frame['translation'] = np.matmul(joint.predecessor.rcg_R_urdf, urdfjoint.frame['xyz'])
-        joint.frame['rotation'] = (rx, ry, rz)
+        # Save the transformation from joint coordinates to link coordinates
+        joint.frame.tr[:] = np.matmul(joint.predecessor.rcg_R_urdf, urdfjoint.frame['xyz'])
+        joint.frame.rot   = (rx, ry, rz)
+        joint.frame.H[0:3,0:3] = rcglink_X_rcgjoint
+
+        # Save the rotation difference between robcogen and urdf link frames
         joint.successor.rcg_R_urdf = R
 
 
@@ -486,7 +651,7 @@ class Serializer :
             keyw = 'r_joint'
         self._blockStart(keyw + ' ' + j.name)
         self._blockStart('ref_frame')
-        self._printFrame( j.frame['translation'], j.frame['rotation'] )
+        self._printFrame( j.frame.tr, j.frame.rot )
         self._blockEnd()
         self._blockEnd()
 
@@ -504,6 +669,22 @@ class Serializer :
             self.myprint( child[0].name + ' via ' + child[1].name )
         self._blockEnd()
 
+    def printUserFrames(self, link):
+        urdfRots  = getIntrinsicXYZFromR(link.rcg_R_urdf)
+        urdfFrame =  any( [math.fabs(x)>1e-5 for x in urdfRots] )
+        if urdfFrame or (len(link.frames)>0) :
+            self._blockStart('frames')
+            for uf in link.frames.keys() :
+                self._blockStart(uf)
+                self._printFrame(link.frames[uf].tr, link.frames[uf].rot)
+                self._blockEnd()
+
+            if urdfFrame :
+                self._blockStart('urdf_' + link.name)
+                self._printFrame( (0.0,0.0,0.0), urdfRots )
+                self._blockEnd()
+            self._blockEnd()
+
     def printLinks_DFS(self, root ) : #DFS = Depth-First-Search
         for child in root.children:
             link = child[0]
@@ -511,15 +692,7 @@ class Serializer :
             self.myprint('id = ' + self.linkID.__str__())
             self.printInertiaParams(link.inertia)
             self.printChildren(link)
-
-            rots = getIntrinsicXYZFromR(link.rcg_R_urdf)
-            if  any( [math.fabs(x)>1e-5 for x in rots] ) :
-                self._blockStart('frames')
-                self._blockStart('urdf_' + link.name)
-                self._printFrame( (0.0,0.0,0.0), rots )
-                self._blockEnd()
-                self._blockEnd()
-
+            self.printUserFrames(link)
             self._blockEnd()
             self.myprint('\n')
 
@@ -529,10 +702,11 @@ class Serializer :
 
     def writeModel(self, converted):
         self.myprint('Robot ' + converted.robotName + '\n{\n')
-        robotBase = [l for l in converted.links.values() if l.parent == None][0]
+        robotBase = converted.root
         self._blockStart('RobotBase ' + robotBase.name)
         self.printInertiaParams(robotBase.inertia)
         self.printChildren(robotBase)
+        self.printUserFrames(robotBase)
         self._blockEnd()
         self.myprint('\n')
 
@@ -545,19 +719,26 @@ class Serializer :
 
 
 def urdfdbg_linkOrigin(urdf, eelinkname):
-    logging.debug("Entering urdfdbg_linkOrigin() function ...")
+    logger.debug("Entering urdfdbg_linkOrigin() function ...")
     H = np.identity(4)
 
     currentLink  = urdf.links[eelinkname]
     while currentLink is not None :
         currentJoint = currentLink.supportingJoint
-        logging.debug("Link : " + currentLink.name)
+        logger.debug("Link : " + currentLink.name)
         if currentJoint is not None :
-            logging.debug("Joint: " + currentJoint.name)
+            logger.debug("Joint: " + currentJoint.name)
             H = np.matmul( currentJoint.predec_H_joint , H )
         currentLink  = currentLink.parent
 
     print( np.round(H[:3,3], 5) )
+
+
+logLevels = {}
+logLevels['debug']   = logging.DEBUG
+logLevels['info']    = logging.INFO
+logLevels['warning'] = logging.WARNING
+logLevels['error']   = logging.ERROR
 
 
 if __name__ == "__main__" :
@@ -576,6 +757,25 @@ if __name__ == "__main__" :
             type=int,
             help='number of digits of the fractional part of an angle used to determine if it is equal to PI (default 5)',
             default=5)
+    argparser.add_argument('--prune-fixed-joints', dest='prunefixed',
+            action='store_true',
+            help='prune fixed joints and child links - see also the following options')
+
+    argparser.add_argument('--to-frames'   , dest='toframes', action='store_true')
+    argparser.add_argument('--no-to-frames', dest='toframes', action='store_false',
+            help='convert pruned links to custom frames in the parent link; defaults to true')
+
+    argparser.add_argument('--lump-inertia', dest='lumpinertia', action='store_true')
+    argparser.add_argument('--no-lump-inertia', dest='lumpinertia',
+            action='store_false',
+            help='''propagate up the tree the inertia of pruned links; defaults to true''')
+    argparser.set_defaults(prunefixed=False)
+    argparser.set_defaults(lumpinertia=True)
+    argparser.set_defaults(toframes=True)
+
+    argparser.add_argument('--log-level', type=str, dest='loglevel',
+            default='warning',
+            help='logging level, chosen among debug, info, warning, error (defaults to warning)')
     group = argparser.add_argument_group('URDF inspection', 'Misc information about the given URDF (no conversion performed)')
     group.add_argument('--link-origin', metavar="LINK",
             type=str,
@@ -583,17 +783,20 @@ if __name__ == "__main__" :
             )
     args = argparser.parse_args()
 
-    file = sys.stdout
+    logging.basicConfig(level= logLevels[args.loglevel])
+    logger = logging.getLogger(__name__)
+
+    ofile = sys.stdout
     if( args.output is not None) :
-        file = open(args.output, 'w')
+        ofile = open(args.output, 'w')
 
     urdf = URDFWrapper( args.urdf )
     if args.link_origin is not None :
         urdfdbg_linkOrigin(urdf, args.link_origin)
     else :
-        conv = Converter( urdf )
+        conv = Converter( urdf, args )
         form = NumFormatter( round_digits=args.digits, pi_round_digits=args.pi_digits)
-        ser = Serializer(file, numFormatter=form)
+        ser = Serializer(ofile, numFormatter=form)
         ser.writeModel(conv)
 
 

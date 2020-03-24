@@ -265,16 +265,25 @@ class Converter :
                - sin(rx) cos(ry) = axis_y
                  cos(rx) cos(ry) = axis_z
             '''
-
+            axis_rounded = np.round(axis_linkframe, 5)
             ry = math.asin( axis_linkframe[0] )
-            cy = math.cos(ry)
-            if round(cy,5) != 0.0 :
-                rx = math.asin( - axis_linkframe[1] / cy )
-            else:
-                rx = 0.0
+            if axis_rounded[2] != 0.0 :
+                rx = math.atan2( -axis_linkframe[1], axis_linkframe[2])
+            else :
+                cy = math.cos(ry)
+                if round(cy,5) != 0.0 :
+                    rx = math.asin( - axis_linkframe[1] / cy )
+                else:
+                    rx = 0.0
             rz = 0.0;
-            if round(math.cos(rx)*math.cos(ry),5) != round(axis_linkframe[2],5) :
-                logger.warning("possible inconsistency in the joint frame rotation")
+            dbgmsg = '''
+                Joint frame conversion for '{joint}':
+                Axis       = {axis}  (in robcogen '{link}'-frame coordinates)
+                (rx ry rz) = {rots}  (before possible rz correction)'''\
+                .format(joint=urdfjoint.name, axis=axis_rounded,
+                        link=joint.predecessor.name,
+                        rots=tuple(round(r,5) for r in (rx,ry,rz)) )
+            logger.debug(dbgmsg)
 
         # Rotation matrix from RobCoGen joint frame to link frame
         rcglink_X_rcgjoint = numeric.getR_intrinsicXYZ(rx, ry, rz)
@@ -296,6 +305,7 @@ class Converter :
 
             # If we have a pure rotation about Z ...
             if np.equal( np.round(Rz, roundDigits), Z).all() :
+                logger.debug("The difference between robcogen and urdf frame seems to be a pure rotation about Z")
                 # Special case angle=PI, for which the formulas below do not work
                 if round(R[0,0],roundDigits) == -1 and round(R[1,1],roundDigits) == -1 :
                     rz = math.pi

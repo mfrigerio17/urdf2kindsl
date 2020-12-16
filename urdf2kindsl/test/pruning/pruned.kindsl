@@ -1,0 +1,148 @@
+Robot dummy_leg
+{
+
+RobotBase base {
+    inertia_properties {
+        mass = 8.262
+        CoM = (0.044938, 0.024101, 0.017984)
+        Ix = 0.044542
+        Iy = 0.492857
+        Iz = 0.512658
+        Ixy= 0.046548
+        Ixz= -0.00431
+        Iyz= -0.000477
+    }
+    children {
+        HipLink via HAA
+    }
+    frames {
+        base_inertia {
+            translation = (0.0, 0.0, 0.0)
+            rotation    = (0.0, 0.0, 0.0)
+        }
+        DummyLink {
+            translation = (0.2999, 0.104, 0.0)
+            rotation    = (2.61799, 0.0, 0.0)
+        }
+    }
+}
+
+
+link HipLink {
+    id = 1
+    inertia_properties {
+        mass = 2.781
+        CoM = (0.008298, -0.015294, 0.056661)
+        Ix = 0.015265
+        Iy = 0.014204
+        Iz = 0.004138
+        Ixy= -0.000742
+        Ixz= 0.0017
+        Iyz= -0.002234
+    }
+    children {
+        ThighLink via HFE
+    }
+    frames {
+        HipLink_inertia {
+            translation = (0.0, 0.0, 0.0)
+            rotation    = (-PI/2.0, 1.0472, -PI/2.0)
+        }
+        HipLink_another {
+            translation = (0.041905, -0.072582, 0.0599)
+            rotation    = (-PI/2.0, 1.0472, 0.0)
+        }
+        urdf_HipLink {
+            translation = (0.0, 0.0, 0.0)
+            rotation    = (0.0, -PI/2.0, 0.0)
+        }
+    }
+}
+
+
+link ThighLink {
+    id = 2
+    inertia_properties {
+        mass = 3.071
+        CoM = (0.245696, 0.000046, 0.030815)
+        Ix = 0.007777
+        Iy = 0.218205
+        Iz = 0.214949
+        Ixy= 0.00014
+        Ixz= 0.0273
+        Iyz= -0.000040
+    }
+    children {
+        ShankLink via KFE
+    }
+    frames {
+        ThighLink_inertia {
+            translation = (0.0, 0.0, 0.0)
+            rotation    = (PI/2.0, -PI/2.0, 0.0)
+        }
+        ThighLink_another {
+            translation = (0.285, 0.0, 0.1003)
+            rotation    = (0.0, -PI/2.0, 0.0)
+        }
+        urdf_ThighLink {
+            translation = (0.0, 0.0, 0.0)
+            rotation    = (0.0, -PI/2.0, 0.0)
+        }
+    }
+}
+
+
+link ShankLink {
+    id = 3
+    inertia_properties {
+        mass = 0.58842
+        CoM = (0.08066, -0.061253, 0.005462)
+        Ix = 0.003775
+        Iy = 0.012656
+        Iz = 0.016197
+        Ixy= -0.00497
+        Ixz= 0.000237
+        Iyz= -0.000143
+    }
+    children {
+    }
+    frames {
+        ShankLink_inertia {
+            translation = (0.0, 0.0, 0.0)
+            rotation    = (PI/2.0, -PI/2.0, 0.0)
+        }
+        FOOT {
+            translation = (0.33797, -0.08795, 0.01305)
+            rotation    = (PI/2.0, -PI/2.0, 0.0)
+        }
+        urdf_ShankLink {
+            translation = (0.0, 0.0, 0.0)
+            rotation    = (0.0, -PI/2.0, 0.0)
+        }
+    }
+}
+
+
+r_joint HAA {
+    ref_frame {
+        translation = (0.2999, 0.104, 0.0)
+        rotation    = (2.61799, PI/2.0, 0.0)
+    }
+}
+
+r_joint HFE {
+    ref_frame {
+        translation = (0.041905, -0.072582, 0.0599)
+        rotation    = (PI/2.0, 0.523599, -PI)
+    }
+}
+
+r_joint KFE {
+    ref_frame {
+        translation = (0.285, 0.0, 0.1003)
+        rotation    = (0.0, 0.0, 0.0)
+    }
+}
+
+}
+

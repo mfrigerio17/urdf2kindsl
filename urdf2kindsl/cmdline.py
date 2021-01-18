@@ -24,6 +24,9 @@ def main() :
             type=int,
             help='number of digits of the fractional part of an angle used to determine if it is equal to PI (default 5)',
             default=5)
+    argparser.add_argument('-b', '--floating-base', dest='floatingbase',
+            action='store_true',
+            help='declare the robot base as floating')
     argparser.add_argument('--prune-fixed-joints', dest='prunefixed',
             action='store_true',
             help='prune fixed joints and child links - see also the following options')
@@ -39,6 +42,7 @@ def main() :
     argparser.set_defaults(prunefixed=False)
     argparser.set_defaults(lumpinertia=True)
     argparser.set_defaults(toframes=True)
+    argparser.set_defaults(floatingbase=False)
 
     argparser.add_argument('--log-level', type=str, dest='loglevel',
             default='warning',
@@ -65,9 +69,12 @@ def main() :
             convert.opt_key_toframes : args.toframes,
             convert.opt_key_lumpi : args.lumpinertia
         }
+        serializerOpts = {
+            kindsl.opt_key_floatingbase : args.floatingbase
+        }
         conv = convert.Converter( urdfin, converterOpts )
         form = kindsl.NumFormatter( round_digits=args.digits, pi_round_digits=args.pi_digits)
-        ser  = kindsl.Serializer(ofile, numFormatter=form)
+        ser  = kindsl.Serializer(ofile, numFormatter=form, options=serializerOpts)
         ser.writeModel(conv)
 
 if __name__ == '__main__':

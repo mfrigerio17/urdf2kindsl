@@ -1,6 +1,8 @@
 import math
 from urdf2kindsl import numeric
 
+opt_key_floatingbase = 'floatingbase'
+
 class NumFormatter :
     '''Rounds the floating point numbers for pretty printing
     '''
@@ -38,11 +40,12 @@ class NumFormatter :
 class Serializer :
     '''Writes the Kinematics-DSL document corresponding to the given Converter instance
     '''
-    def __init__(self, outfile, numFormatter=NumFormatter() ):
+    def __init__(self, outfile, numFormatter=NumFormatter(), options={}):
         self.__ind = 0
         self.linkID = 1
         self.file = outfile
         self.formatter = numFormatter
+        self.opts = options
 
     def vec3Str(self, prefix, tupl, angles=False):
         return prefix + '({0[0]:s}, {0[1]:s}, {0[2]:s})'.format(
@@ -128,7 +131,10 @@ class Serializer :
     def writeModel(self, converted):
         self.myprint('Robot ' + converted.robotName + '\n{\n')
         robotBase = converted.root
-        self._blockStart('RobotBase ' + robotBase.name)
+        if self.opts.get(opt_key_floatingbase, False):
+            self._blockStart('RobotBase ' + robotBase.name + ' floating')
+        else:
+            self._blockStart('RobotBase ' + robotBase.name)
         self.printInertiaParams(robotBase.inertia)
         self.printChildren(robotBase)
         self.printUserFrames(robotBase)

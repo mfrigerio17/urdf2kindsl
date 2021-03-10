@@ -287,7 +287,10 @@ class Converter :
             else :
                 cy = math.cos(ry)
                 if round(cy,5) != 0.0 :
-                    rx = math.asin( - axis_linkframe[1] / cy )
+                    arg = - axis_linkframe[1] / cy
+                    if math.fabs(arg) > 1 :
+                        arg = math.copysign(1, arg)
+                    rx = math.asin( arg )
                 else:
                     rx = 0.0
             rz = 0.0;

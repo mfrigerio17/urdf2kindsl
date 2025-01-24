@@ -1,0 +1,31 @@
+[project]
+
+name    = "urdf2kindsl"
+version = "0.1.0"
+authors = [
+    { name = "Marco Frigerio", email = "marco.frigerio17@pm.me" }
+]
+description = "URDF to KinDSL robot model converter"
+license     = { file = "LICENSE" }
+readme      = "readme.md"
+
+requires-python = ">=3.3"
+
+
+
+dependencies = [
+    "numpy"
+]
+
+
+[project.scripts]
+urdf2kindsl = "urdf2kindsl.cmdline:main"
+
+
+[tool.setuptools]
+packages = ["urdf2kindsl"]
+
+
+[tool.setuptools.package-dir]
+"urdf2kindsl" = "urdf2kindsl/"
+

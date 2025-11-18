@@ -33,12 +33,12 @@ link HipLink {
     inertia_properties {
         mass = 2.781
         CoM = (0.008298, -0.015294, 0.056661)
-        Ix = 0.015265
-        Iy = 0.014204
+        Ix = 0.015306
+        Iy = 0.014164
         Iz = 0.004138
-        Ixy= -0.000742
-        Ixz= 0.0017
-        Iyz= -0.002234
+        Ixy= -0.000672
+        Ixz= 0.001415
+        Iyz= -0.0024
     }
     children {
         ThighLink via HFE
@@ -68,8 +68,8 @@ link ThighLink {
         Ix = 0.007777
         Iy = 0.218205
         Iz = 0.214949
-        Ixy= 0.00014
-        Ixz= 0.0273
+        Ixy= 0.00013
+        Ixz= 0.027393
         Iyz= -0.000040
     }
     children {
@@ -100,7 +100,7 @@ link ShankLink {
         Ix = 0.003775
         Iy = 0.012656
         Iz = 0.016197
-        Ixy= -0.00497
+        Ixy= -0.004727
         Ixz= 0.000237
         Iyz= -0.000143
     }

@@ -147,7 +147,7 @@ def rotoTranslateInertia(inertia, tr, R) :
     iyz = inertia['Iyz']
     tensor = np.array( [[ ixx, -ixy, -ixz],
                         [-ixy,  iyy, -iyz],
-                        [-ixy, -iyz,  izz] ])
+                        [-ixz, -iyz,  izz] ])
     tensor = tensor - mass * (np.matmul(com_x, com_x.T) - np.matmul(vec_x, vec_x.T))
 
     tensor2 = np.matmul(np.matmul(R, tensor), R.T)

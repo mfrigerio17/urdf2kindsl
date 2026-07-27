@@ -1,5 +1,6 @@
 import math
 from urdf2kindsl import numeric
+from urdf2kindsl import logger
 
 opt_key_floatingbase = 'floatingbase'
 
@@ -75,7 +76,10 @@ class Serializer :
     def printJoint(self, j):
         if(j.type == 'prismatic') :
             keyw = 'p_joint'
-        else :
+        elif(j.type == 'revolute') :
+            keyw = 'r_joint'
+        else:
+            logger.warning(f"Unsupported type '{j.type}' for joint '{j.name}'. Using revolute joint")
             keyw = 'r_joint'
         self._blockStart(keyw + ' ' + j.name)
         self._blockStart('ref_frame')

@@ -97,38 +97,7 @@ class Converter :
             self.convertInertialData(self.links[name], urdf.links[urdfname].inertia)
 
         if options[opt_key_prune] :
-            # Let's first explicitly check for the nasty case where the root is
-            # a dummy link, connected via a fixed joint to the first link
-            self._collapseDummyRoots()
             self._pruneFixedJoints(options)
-
-    def _collapseDummyRoots(self):
-        root = self.root
-        keepGoing = True
-        while self.isDummyLink(root) and keepGoing :
-            if len(root.children) > 1 :
-                logger.warning("Detected dummy root link ({0}) with multiple children; cannot collapse".format(root.name))
-                keepGoing = False
-                for childPair in root.children :
-                    childPair[1].__preserve = True
-            else :
-                childSpec = root.children[0]
-                joint = childSpec[1]
-                child = childSpec[0]
-                if joint.type != 'fixed' :
-                    logger.warning("Detected dummy root link ({0}) supporting a non-fixed joint ({1})".format(root.name, joint.name))
-                    keepGoing = False
-                    joint.__preserve = True
-                else :
-                    # We have a dummy root link, with only one child connected via fixed joint.
-                    # Let's delete it and replace the root
-                    logger.info("Deleting dummy pair '{0}'-'{1}', root replaced with '{2}'".format(
-                        root.name, joint.name, child.name))
-                    root = child
-                    del self.links[root.name]
-                    del self.joints[joint.name]
-
-        self.root = root
 
     def _pruneFixedJoints(self, options):
         # Use a list to preserve the order in which the links are added. This
@@ -220,14 +189,6 @@ class Converter :
         self.leafs = [l for l in self.links.values() if len(l.children)==0]
         return changed
 
-
-    def isDummyLink(self, link):
-        immaterial = link.inertia['mass'] == 0.0
-        fixedj = False
-        if link.parentJ is not None :
-            fixedj = (link.parentJ.type == 'fixed')
-
-        return (immaterial and fixedj)
 
     def convertInertialData(self, link, urdfParams):
         iin = {}

@@ -2,6 +2,13 @@
 
 <robot name="dummy_leg">
 
+  <link name="world"></link>
+  <!-- this nonsense is often found in URDF models -->
+  <joint name="world_to_base" type="fixed">
+    <parent link="world"/>
+    <child link="base"/>
+  </joint>
+
   <link name="base">
   </link>
 

@@ -1,7 +1,7 @@
 Robot dummy_leg
 {
 
-RobotBase base {
+RobotBase world {
     inertia_properties {
         mass = 8.262
         CoM = (0.044938, 0.024101, 0.017984)
@@ -16,6 +16,10 @@ RobotBase base {
         HipLink via HAA
     }
     frames {
+        base {
+            translation = (0.0, 0.0, 0.0)
+            rotation    = (0.0, 0.0, 0.0)
+        }
         base_inertia {
             translation = (0.0, 0.0, 0.0)
             rotation    = (0.0, 0.0, 0.0)
